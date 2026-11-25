@@ -9,7 +9,8 @@ argument-hint: "<slug>"
 Track: $ARGUMENTS
 
 You own `tracks/<slug>/` and nothing else. Your conversation will be compacted,
-so the files are your memory.
+so the files are your memory. When a detail from before a compaction is
+missing, `genie recall <words>` searches this session's recording.
 
 ## Start or resume
 

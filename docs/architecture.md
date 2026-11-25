@@ -21,10 +21,12 @@ Standard library Python only. No services, no database.
 notes/
   overview.md        hub note with the status board
   decisions.md       one row per decision
+  timeline.md        one row per cross-track checkpoint, never trimmed
   findings/          one note per finding
 tracks/<slug>/
   README.md          goal, how it is judged, limits
   STATE.md           last 3 checkpoints, newest first
+  TIMELINE.md        one row per checkpoint, never trimmed
   SCORES.md          one row per outside attempt
   lab/               only for scored work
     WISH.md          problem card
@@ -43,7 +45,7 @@ gates, locks and the board belong to the main one, so every session shares them.
 
 | Event | Does | Can block |
 |---|---|---|
-| SessionStart | prints the notes digest, lab lines and open gates. After a compaction it gives back the track's newest checkpoint | no |
+| SessionStart | prints the notes digest, lab lines and open gates. After a compaction it gives the session its own last state back, and the work done after that checkpoint | no |
 | PostToolUse | reads context size from the transcript, asks for a checkpoint about 36K tokens before compaction. Right after a compaction it waits for 20K tokens of new work | no |
 | PreCompact | holds automatic compaction until a fresh checkpoint exists | yes, until 96 percent or 25 holds |
 | PreToolUse | push gate, human-only gate answers, record files, solver and scorer split | yes |
@@ -58,6 +60,58 @@ comes late, the hold tells the agent at once.
 
 Output at session start is capped (`digest_chars`), because every token there is
 paid again after each compaction.
+
+## What survives a compaction
+
+Claude Code decides when to compact, and no hook can start one. So genie makes
+the work recoverable whenever it happens.
+
+| Part of the session | After a compaction |
+|---|---|
+| old work | a summary, written by a model |
+| the last checkpoint's state | given back word for word by genie |
+| work after that checkpoint | listed by genie from the recording, one line per step |
+| the newest messages | kept word for word by Claude Code |
+
+**Receipts.** A checkpoint that was saved writes a receipt to
+`~/.claude/genie/receipts/<session>/` and prints `receipt: <id>`. The hooks
+count a checkpoint only when they take that receipt. A command that names
+`genie checkpoint` without saving one leaves none, be it a `grep`, a dry run or
+a refused call. The receipt carries that session's state entry, so two sessions
+on one track never get each other's state back. A checkpoint that runs in the
+background counts when it lands, and its place in the recording is where it was
+launched. The printed id serves a shell that does not pass
+`CLAUDE_CODE_SESSION_ID` on. A command matched by `checkpoint_pattern` leaves no
+receipt, so the match is all it takes.
+
+**The gap.** The recording is the session's transcript file. A compaction does
+not touch it. After a compaction the SessionStart hook reads it from the
+checkpoint to the first message Claude Code kept. It lists each message in full
+and each tool call as one line with the first line of its result. Claude Code
+writes its own record of the compaction after that hook has run, so the hook
+takes the place where PreCompact let the compaction through as the start of the
+kept part. In 57 compactions nothing written after that place was dropped, and
+the kept part began up to 7 entries before it. So the last lines of the list
+can repeat a kept message. They do not leave one out.
+
+In the contest 414 tool calls came after a checkpoint and before a compaction.
+Claude Code kept 325 of them word for word. The other 89, in 23 of 97
+compactions, were in the summary only. Those are what the list covers.
+
+**Recall.** `genie recall <words>` searches the recording. `--at <number>`
+prints one entry in full. `--gap` lists everything after the last checkpoint.
+
+**Timeline.** `STATE.md` keeps the last 3 states of a track. `TIMELINE.md`
+gets one row per checkpoint and is never trimmed: time, who, topic, next step
+and links to what was filed.
+
+Limits:
+
+- Claude Code deletes recordings after `cleanupPeriodDays`, 30 days by default
+- the list shows the first result line of a call. The rest takes a `recall`
+- the agent still has to read what it is given
+- receipts and hook state stay on one machine
+- transcript fields such as `preservedSegment` are undocumented and may change
 
 ## Config
 

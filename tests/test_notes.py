@@ -66,6 +66,28 @@ class NotesTest(ProjectTest):
         self.assertIn("## Updates", (self.top / "notes" / "findings" / "api-batch-size.md").read_text())
         self.assertEqual(self.git("log", "--oneline", "--all"), "")  # it never commits
 
+    def test_every_checkpoint_adds_a_timeline_row(self):
+        self.g("init")
+        self.g("track", "add", "api", "The API")
+        out = self.g("checkpoint", "--track", "api", "batch | size", stdin=ENTRY)
+        self.assertIn("timeline: tracks/api/TIMELINE.md", out)
+        self.assertIn("tracks/api/TIMELINE.md", out.split("git add --")[1])
+        for n in range(5):                                         # STATE.md keeps 3, the timeline keeps all
+            self.g("checkpoint", "--track", "api", f"t{n}", stdin="## Next\n- step %d\n===DURABLE===\n>>> none: x\n" % n)
+        rows = [r for r in (self.top / "tracks" / "api" / "TIMELINE.md").read_text().splitlines()
+                if r.startswith("| 20")]
+        self.assertEqual(len(rows), 6)
+        first = [c.strip() for c in rows[0].split("|")]
+        self.assertEqual(first[2:5], ["Ann Example", "batch / size", "Try a cache."])
+        for part in ("[[api-batch-size]]", "decision: Use 64", "score 41 s"):
+            self.assertIn(part, first[5])                          # what it filed, linked
+        self.assertIn("| t4 | step 4 |", rows[-1])                 # oldest first, newest last
+        self.g("checkpoint", "--track", "none", "overseer round", stdin="===DURABLE===\n>>> none: quiet\n")
+        self.assertIn("overseer round", (self.top / "notes" / "timeline.md").read_text())
+        self.assertIn("0 errors", self.g("vault", "check"))
+        self.g("checkpoint", "--track", "api", "dry", "--dry-run", stdin=ENTRY)
+        self.assertNotIn("dry", (self.top / "tracks" / "api" / "TIMELINE.md").read_text())
+
     def test_checkpoint_refuses_before_writing(self):
         self.g("init")
         self.g("track", "add", "api")

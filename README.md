@@ -88,7 +88,11 @@ command, `genie`, which Claude runs from its Bash tool. `genie help` lists it al
 | Problem in a long session | What genie does |
 |---|---|
 | compaction comes late and loses work | a hook asks for a checkpoint before compaction is prepared and holds compaction until it exists |
-| after compaction the session forgets or stops | a hook gives back the newest `STATE.md` and says carry on |
+| after compaction the session forgets or stops | a hook gives the session its own last state back and says carry on |
+| work done after the last checkpoint survives only as a summary | the same hook lists that work from the session's recording, one line per step |
+| a detail is gone after compaction | `genie recall` searches the recording, which a compaction does not touch |
+| a command that only names a checkpoint releases the hold | only a saved checkpoint counts. It leaves a receipt for the hooks |
+| nobody can say how a track got here | every checkpoint adds a row to `TIMELINE.md`, never trimmed |
 | a hold could trap a session | it lets go at 96 percent, or after 25 holds |
 | nobody knows what window is worth it | `genie window` measures your own sessions and prices each size |
 
@@ -131,7 +135,7 @@ Genie comes out of one 48 hour, four-track contest with two people. The
 | Keep-alive hooks | 64 of 70 compactions it let through had a fresh checkpoint |
 | Watcher | replaced a five minute model poll |
 | Labs | scorer trust checks ran on real tracks. The keep or revert loop was **not** exercised there: no row was ever kept |
-| This plugin | a cleaned-up port. 59 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. No long run and no full fleet on it yet |
+| This plugin | a cleaned-up port. 80 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. In two later sessions saved checkpoints released the hold, and one reload listed the two steps done after the checkpoint, which the agent then did not redo. A human message in that stretch is covered by unit tests only. No long run and no full fleet on it yet |
 
 ## What it touches
 
@@ -139,8 +143,8 @@ Genie comes out of one 48 hour, four-track contest with two people. The
 |---|---|
 | Your repo | `.genie/`, `notes/`, `tracks/`. It never commits |
 | `.claude/settings.local.json` | one key, `autoCompactWindow`. Skip it with `genie init --no-window` |
-| `~/.claude/genie/` | hook state per session and a compaction log |
-| `~/.claude/sessions`, `~/.claude/projects` | read only, to see context size and liveness. These formats are undocumented and may change |
+| `~/.claude/genie/` | hook state per session, checkpoint receipts and a compaction log |
+| `~/.claude/sessions`, `~/.claude/projects` | read only, to see context size and liveness and to read a session's recording back. These formats are undocumented and may change |
 | Network | `genie bridge` pushes one branch, `genie-bridge`. `second-opinion` sends text to that provider. Nothing else |
 
 ## Docs

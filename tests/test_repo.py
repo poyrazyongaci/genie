@@ -56,7 +56,8 @@ class RepoTest(unittest.TestCase):
         src = (SCRIPTS / "genie.py").read_text()
         known = set(re.findall(r'add_parser\("([\w-]+)"', src)) | set(re.findall(r'add\("([\w-]+)", "cmd_', src))
         known |= {"on", "off", "keep", "reject", "supersede", "lock", "unlock", "locks", "help"}
-        known |= {"bridge", "board", "watch", "dash", "vault", "checkpoint", "second-opinion"}
+        known |= set(re.findall(r'"([\w-]+)":', re.search(r"^PASS = \{(.*?)\}", src, re.S | re.M).group(1)))
+        self.assertIn("checkpoint", known)
         for p in TEXT:
             if p.suffix != ".md":
                 continue

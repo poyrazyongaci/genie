@@ -47,6 +47,28 @@ Skip the overseer. `genie wish`, then one session with `/genie:lab <slug>`. Use
 `genie track add <slug>`, write its README, run one checkpoint. For scored work,
 put past outside scores in `tracks/<slug>/SCORES.md` and run `genie adopt`.
 
+## Find what a compaction dropped
+
+The recording keeps every message and tool result. A compaction does not touch
+it.
+
+```bash
+genie recall port 8080       # search, newest first. Every word must match
+genie recall --at 414684     # one entry in full, the number comes from a hit
+genie recall --gap           # everything after the last checkpoint
+```
+
+An agent runs these in its own session. From your terminal, name the session
+with `--session <id>` or the file with `--file <path>`. Recordings are in
+`~/.claude/projects/`.
+
+## See how a track got here
+
+`STATE.md` keeps the last 3 states. `tracks/<slug>/TIMELINE.md` has one row per
+checkpoint, oldest first, and is never trimmed. Each row links the findings
+that checkpoint filed, so the notes open as a graph in Obsidian. Cross-track
+work goes to `notes/timeline.md`.
+
 ## Helpers
 
 A helper is a second session or subagent that only reads: labels data, replays

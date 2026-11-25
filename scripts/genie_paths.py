@@ -13,12 +13,16 @@ on every tool call.
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 CONFIG = Path(".genie") / "config.json"
 HOME = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or Path.home())
 # Session state is per machine, not per project, and survives plugin updates.
 STATE_HOME = Path(os.environ.get("GENIE_HOME") or HOME / ".claude" / "genie")
+# One file per checkpoint that was really saved, written by the checkpoint
+# itself. The hooks trust these, never the text of a command.
+RECEIPTS = STATE_HOME / "receipts"
 
 COMPACT_RATIO = 0.87   # Claude Code compacts at this share of the window (measured, undocumented)
 
@@ -56,11 +60,58 @@ def read_json(path, default):
 
 
 def write_json(path, data):
+    """Whole file or nothing. The temp name is unique, so two writers never share one."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def session_key(sid):
+    """A session id as a safe folder or file name."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", str(sid or ""))[:80]
+
+
+class Lock:
+    """One holder at a time, across processes. It never traps anyone: after
+    `wait` seconds the caller goes on without it, and a lock older than
+    `stale` seconds is taken over."""
+
+    def __init__(self, path, wait=2.0, stale=20.0):
+        self.path, self.wait, self.stale, self.held = Path(path), wait, stale, False
+
+    def __enter__(self):
+        end = time.monotonic() + self.wait
+        while True:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                self.held = True
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - self.path.stat().st_mtime > self.stale:
+                        self.path.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                if time.monotonic() >= end:
+                    return self
+                time.sleep(0.02)
+            except OSError:
+                return self
+
+    def __exit__(self, *exc):
+        if self.held:
+            try:
+                self.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
 
 
 def _start(start=None):

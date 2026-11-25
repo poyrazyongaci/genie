@@ -8,9 +8,22 @@ Format: [Keep a Changelog](https://keepachangelog.com). Versions follow semver.
 
 - `genie window` measures the floor, growth and cache use of your own sessions
   and prices every compaction window
+- `genie recall` reads a session's recording back: a search, one entry in full,
+  or everything after the last checkpoint
+- After a compaction the reload lists the work between the last checkpoint and
+  the messages Claude Code kept, read from the recording
+- `tracks/<slug>/TIMELINE.md` and `notes/timeline.md`, one row per checkpoint,
+  never trimmed
+- A resumed session gets its last state and the recall commands
 
 ### Changed
 
+- A checkpoint counts only when it was saved. It leaves a receipt bound to the
+  session, and the hooks take that. Before, any command that named
+  `genie checkpoint` counted, a `grep` for it included
+- After a compaction a session gets its own last state back. Before, it got the
+  newest entry in `STATE.md`, which a second session on the track may have
+  written
 - The checkpoint nudge comes 36K tokens before compaction. It was 72 percent of
   the window, which was too early on big windows and too late on small ones
 - After a compaction the nudge waits for 20K tokens of new work
@@ -18,6 +31,8 @@ Format: [Keep a Changelog](https://keepachangelog.com). Versions follow semver.
 ### Fixed
 
 - The field report's share of cache reads
+- Two hooks of one session that ran at once could drop each other's state.
+  They take turns now, and every temp file has its own name
 
 ## 0.1.0
 

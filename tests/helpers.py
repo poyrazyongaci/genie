@@ -60,3 +60,53 @@ class ProjectTest(unittest.TestCase):
 
     def state(self, sid="s1"):
         return json.loads((self.home / ".claude" / "genie" / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
+
+
+class Recording:
+    """A stand-in for a Claude Code transcript, with the fields genie reads."""
+
+    def __init__(self, path, tokens=120_000):
+        self.path, self.tokens, self.rows, self.n = Path(path), tokens, [], 0
+
+    def _add(self, row, at=None):
+        self.n += 1
+        row.setdefault("uuid", f"u{self.n}")
+        row["timestamp"] = at or "2099-01-01T%02d:%02d:%02d.000Z" % (self.n // 3600, self.n // 60 % 60, self.n % 60)
+        self.rows.append(row)
+        return row["uuid"]
+
+    def _usage(self):
+        return {"input_tokens": 10, "cache_read_input_tokens": self.tokens - 20,
+                "cache_creation_input_tokens": 5, "output_tokens": 5}
+
+    def say(self, text, at=None, **extra):
+        """A message typed by the human or sent by another agent."""
+        return self._add({"type": "user", "message": {"role": "user", "content": text}, **extra}, at)
+
+    def note(self, text, at=None):
+        """Text from the agent itself."""
+        return self._add({"type": "assistant", "message": {
+            "role": "assistant", "usage": self._usage(), "content": [{"type": "text", "text": text}]}}, at)
+
+    def call(self, name, tool_input, result="ok", at=None, side=False):
+        """A tool call and its result. Returns (tool_use id, uuid of the call entry)."""
+        tid = f"toolu_{self.n + 1}"
+        uuid = self._add({"type": "assistant", "isSidechain": side, "message": {
+            "role": "assistant", "usage": self._usage(),
+            "content": [{"type": "tool_use", "id": tid, "name": name, "input": tool_input}]}}, at)
+        self._add({"type": "user", "isSidechain": side, "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": tid, "content": result}]}}, at)
+        return tid, uuid
+
+    def boundary(self, head=None, at=None):
+        """Claude Code compacts here and keeps everything from `head` on, word for word."""
+        meta = {"trigger": "auto", "preTokens": self.tokens}
+        if head:
+            meta["preservedSegment"] = {"headUuid": head, "tailUuid": self.rows[-1]["uuid"]}
+        self._add({"type": "system", "subtype": "compact_boundary", "compactMetadata": meta}, at)
+        self._add({"type": "user", "isCompactSummary": True, "message": {
+            "role": "user", "content": "This session is being continued from a previous conversation."}}, at)
+
+    def write(self):
+        self.path.write_text("".join(json.dumps(r) + "\n" for r in self.rows), encoding="utf-8")
+        return str(self.path)

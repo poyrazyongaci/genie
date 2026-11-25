@@ -59,6 +59,19 @@ ENTRY
 `draft` was seen once, `confirmed` was reproduced, `dead` failed and says why.
 
 It checks every directive before writing anything, keeps the last 3 states in
-`STATE.md`, lints the notes and prints the git commands for the files it
-touched. It never commits. After a compaction the newest state is given back
-to you. Use `--track none` for work outside any track. That saves no state.
+`STATE.md`, adds one row to `TIMELINE.md`, lints the notes and prints the git
+commands for the files it touched. It never commits. Use `--track none` for
+work outside any track. That saves no state.
+
+A saved checkpoint prints `receipt: <id>`. The keep-alive hooks count the
+checkpoint from that receipt. A refused call or a dry run prints none, so read
+the output before you move on.
+
+After a compaction you get your own last state back, with a list of what you
+did after it. That list is newer than the state. For anything else from before
+the compaction, read the session's recording:
+
+```bash
+genie recall <words>          # search, newest first
+genie recall --at <number>    # one entry in full
+```

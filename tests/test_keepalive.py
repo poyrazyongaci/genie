@@ -19,6 +19,12 @@ class KeepAliveTest(ProjectTest):
         return self.hook("PostToolUse", tool_name="Bash", tool_input={"command": cmd},
                          transcript_path=self.transcript(tokens))
 
+    def checkpoint(self, tokens):
+        """The agent saves a real checkpoint and Claude Code reports the call."""
+        out = self.g("checkpoint", "--track", "api", "wiring", stdin=ENTRY, env={"CLAUDE_CODE_SESSION_ID": "s1"})
+        return self.hook("PostToolUse", tool_name="Bash", tool_input={"command": "genie checkpoint --track api wiring"},
+                         tool_response={"stdout": out, "stderr": ""}, transcript_path=self.transcript(tokens))
+
     def compact(self, tokens, trigger="auto"):
         return self.hook("PreCompact", trigger=trigger, transcript_path=self.transcript(tokens))
 
@@ -40,8 +46,7 @@ class KeepAliveTest(ProjectTest):
         self.assertEqual(code, 2)                                  # held: no checkpoint yet
         self.assertIn("no checkpoint yet", err)
         self.assertIn("on hold", self.bash("ls", 201_000)[1])      # and the agent is told
-        self.g("checkpoint", "--track", "api", "wiring", stdin=ENTRY)
-        self.assertEqual(self.bash("genie checkpoint --track api wiring", 202_000)[1], "")
+        self.assertEqual(self.checkpoint(202_000)[1], "")
         self.assertEqual(self.state()["track"], "api")
         code, out, _ = self.compact(205_000)
         self.assertEqual(code, 0)                                  # fresh checkpoint, let it through
@@ -54,11 +59,15 @@ class KeepAliveTest(ProjectTest):
     def test_stale_checkpoint_holds_again(self):
         self.g("init")
         self.g("track", "add", "api")
-        self.bash("genie checkpoint --track api x", 185_000)
+        self.checkpoint(185_000)
         self.assertEqual(self.compact(190_000)[0], 0)              # 5K past it
         code, _, err = self.compact(199_000)                       # 14K past it
         self.assertEqual(code, 2)
         self.assertIn("last checkpoint was at 185K", err)
+        self.bash("genie checkpoint --track api x", 199_500)       # naming a checkpoint saves nothing
+        self.assertEqual(self.compact(199_600)[0], 2)
+        self.checkpoint(199_700)                                   # saving one does
+        self.assertEqual(self.compact(199_800)[0], 0)
 
     def test_a_hold_below_the_nudge_point_is_told_at_once(self):
         self.g("init")
@@ -110,7 +119,11 @@ class KeepAliveTest(ProjectTest):
 
     def test_dry_run_and_lookalikes_do_not_count(self):
         self.g("init")
-        for cmd in ("genie checkpoint --track api x --dry-run", "echo checkpoint", "genie status"):
+        self.g("track", "add", "api")
+        dry = self.g("checkpoint", "--track", "api", "x", "--dry-run", stdin=ENTRY, env={"CLAUDE_CODE_SESSION_ID": "s1"})
+        self.assertNotIn("receipt", dry)
+        for cmd in ("genie checkpoint --track api x --dry-run", "echo checkpoint", "genie status",
+                    "genie checkpoint --track api x"):
             self.bash(cmd, 185_000)
             self.assertNotIn("ckpt_time", self.state(), cmd)
         (self.top / ".genie" / "config.json").write_text(json.dumps({"checkpoint_pattern": r"make save"}))

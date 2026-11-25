@@ -20,9 +20,19 @@ Stdin is the state body (## Goal / ## Done / ## Next / ## Blocked), then a line
 It validates every directive before writing anything, then writes, runs the
 notes check and prints the exact git commands for only the files it touched.
 It never commits or pushes.
+
+Every checkpoint also adds one row to a timeline that is never trimmed:
+tracks/<slug>/TIMELINE.md, or notes/timeline.md for cross-track work. STATE.md
+says where a track is. The timeline says how it got there.
+
+A checkpoint that was saved leaves a receipt in ~/.claude/genie/receipts and
+prints `receipt: <id>`. The keep-alive hooks count a checkpoint only when they
+find that receipt. A command that merely mentions a checkpoint leaves none.
 """
 import datetime as dt
+import os
 import re
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +52,8 @@ MARK = "<!-- checkpoint -->"
 KEEP = 3
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 SCORES_HEAD = "| Time | Commit | Local score | Outside score | Note |\n|---|---|---|---|---|\n"
+TIMELINE_HEAD = "| Time | Who | Topic | Next | Filed |\n|---|---|---|---|---|\n"
+RECEIPT_DAYS = 14   # an unclaimed receipt is of no use to anyone after this
 BOARD_COLS = {"owner": 1, "local": 2, "outside": 3, "board": 3, "next": 4}
 
 
@@ -143,6 +155,58 @@ def finding_note(slug, summary, status, track, body, today):
     return text
 
 
+def cell(text, cap=160):
+    text = re.sub(r"\s+", " ", str(text)).replace("|", "/").strip()
+    return text if len(text) <= cap else text[: cap - 3] + "..."
+
+
+def timeline_row(track, today, now, who, topic, body, filed):
+    """Append one row for this checkpoint. Returns the file it went to."""
+    if track:
+        p = ROOT / "tracks" / track / "TIMELINE.md"
+        title, what = "%s timeline" % track, "the %s track" % track
+    else:
+        p = NOTES / "timeline.md"
+        title, what = "Timeline", "cross-track work"
+    if p.exists():
+        text = bump_updated(read(p), today)
+    else:
+        text = ("---\ndate: %s\nupdated: %s\ntags: [timeline%s]\ntype: log\n"
+                "summary: Every checkpoint of %s, one row each, oldest first. Never trimmed.\n---\n\n"
+                "# %s\n\nBack to [[%s]].\n"
+                "One row per `genie checkpoint`. Append only. The newest state is in %s.\n\n%s" % (
+                    today, today, ", " + track if track else "", what, title, HUB,
+                    "`STATE.md`" if track else "each track's `STATE.md`", TIMELINE_HEAD))
+    m = re.search(r"^## Next\s*\n(.*?)(?=^## |\Z)", body, re.S | re.M)
+    nxt = next((ln.strip().lstrip("-* ").strip() for ln in (m.group(1) if m else "").splitlines() if ln.strip()), "")
+    row = "| %s | %s | %s | %s | %s |" % (now.strftime("%Y-%m-%d %H:%M %Z"), cell(who, 40), cell(topic, 90),
+                                          cell(nxt), cell(", ".join(filed), 400))
+    write(p, text.rstrip("\n") + "\n" + row)
+    return p
+
+
+def issue_receipt(now, track, topic, who, entry):
+    """Proof for the keep-alive hooks that this checkpoint was saved. It is
+    bound to the session that ran it and holds that session's own state entry,
+    so a second session on the track can never be mistaken for this one."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    rid = "%d-%s" % (int(now.timestamp() * 1000), secrets.token_hex(4))
+    try:
+        genie_paths.write_json(genie_paths.RECEIPTS / (genie_paths.session_key(sid) or "_") / (rid + ".json"), {
+            "id": rid, "time": now.timestamp(), "session": sid, "root": str(ROOT), "track": track,
+            "topic": topic, "who": who, "entry": entry})
+    except OSError as exc:
+        return "failed (%s)" % exc
+    limit = now.timestamp() - RECEIPT_DAYS * 86400
+    try:
+        for old in list(genie_paths.RECEIPTS.glob("*/*.json"))[:2000]:
+            if old.stat().st_mtime < limit:
+                old.unlink()
+    except OSError:
+        pass
+    return rid
+
+
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     if not genie_paths.enabled():
@@ -239,7 +303,7 @@ def main(argv=None):
     if behind and behind != "0":
         say("WARNING: %s commits behind origin. Run `git pull --rebase` before committing these notes." % behind)
 
-    report = []
+    report, filed, entry = [], [], ""
     for step in plan:
         kind = step[0]
         if kind == "none":
@@ -260,17 +324,20 @@ def main(argv=None):
                 report.append("finding: new [[%s]] and listed in the overview" % slug)
                 touched.append(OVERVIEW)
             touched.append(p)
+            filed.append("[[%s]]" % slug)
         elif kind == "append":
             _, p, heading, content = step
             write(p, append_under(bump_updated(read(p), today), heading, content))
             touched.append(p)
             report.append("append: %s%s" % (p.relative_to(ROOT).as_posix(), "#" + heading if heading else ""))
+            filed.append("[[%s]]" % p.stem if NOTES in p.parents else p.relative_to(ROOT).as_posix())
         elif kind == "decision":
             _, what, why, by = step
             row = "| %s | %s | %s | %s |" % (today, what.replace("|", "/"), why.replace("|", "/"), by)
             write(DECISIONS, bump_updated(read(DECISIONS), today).rstrip("\n") + "\n" + row)
             touched.append(DECISIONS)
             report.append("decision: %s" % what[:70])
+            filed.append("decision: %s" % what[:60])
         elif kind == "board":
             _, name, kv = step
             lines = ov.splitlines()
@@ -291,6 +358,7 @@ def main(argv=None):
             write(p, text.rstrip("\n") + "\n" + row)
             touched.append(p)
             report.append("score: %s local %s outside %s" % (track, local, board))
+            filed.append("score %s" % local)
 
     if OVERVIEW in touched:
         write(OVERVIEW, bump_updated(ov, today))
@@ -310,6 +378,11 @@ def main(argv=None):
         write(p, fm + "\n\n".join(MARK + "\n" + e for e in entries))
         touched.append(p)
         report.append("state: tracks/%s/STATE.md (%d kept)" % (track, len(entries)))
+
+    p = timeline_row(track, today, now, who, topic, body, filed)
+    touched.append(p)
+    report.append("timeline: %s" % p.relative_to(ROOT).as_posix())
+    report.append("receipt: %s" % issue_receipt(now, track, topic, who, entry))
 
     for r in report:
         say(r)

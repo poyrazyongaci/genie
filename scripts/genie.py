@@ -12,6 +12,7 @@ Set up
 Every day
   genie status                           sessions, tracks and labs at a glance
   genie checkpoint --track <slug> "..."  save state and file what was learned (stdin)
+  genie recall <words> | --gap | --at N  read this session's recording back
   genie vault index | check              the shared notes: digest, lint
   genie board ... | bridge ...           mail between sessions, on one machine or over git
   genie watch [--once | --alive]         no-model watcher, exits when something needs a look
@@ -38,8 +39,12 @@ Keep-alive, how it works
      After a compaction it waits for 20K tokens of new work first.
   3. A PreCompact hook holds automatic compaction until that checkpoint
      exists. Past CEILING tokens it lets compaction through anyway.
-  4. A SessionStart hook reloads the track's STATE.md after compaction and
-     tells the agent to carry on.
+  4. A checkpoint that was really saved leaves a receipt. The hooks trust the
+     receipt, never the text of a command, and note where in the session's
+     recording the checkpoint sits.
+  5. A SessionStart hook gives the session its own last state back after a
+     compaction, plus the work between that checkpoint and the messages
+     Claude Code kept, read from the recording.
 """
 import argparse
 import calendar
@@ -57,7 +62,8 @@ if sys.version_info < (3, 11):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import genie_paths  # noqa: E402
-from genie_paths import COMPACT_RATIO, HOME, STATE_HOME, read_json, write_json  # noqa: E402
+from genie_paths import (COMPACT_RATIO, HOME, RECEIPTS, STATE_HOME, Lock, read_json,  # noqa: E402
+                         session_key, write_json)
 
 # Claude Code prepares a compaction about 28K tokens before it applies one
 # (measured at windows of 100K and 250K). The nudge comes a few calls before that.
@@ -71,11 +77,14 @@ MAX_HOLDS = 25
 TAIL_BYTES = 600_000   # enough for the last model call, small enough for every tool call
 STATE_CHARS = 6_000
 HOOK_OUT_CHARS = 9_500  # Claude Code cuts hook output at 10,000 characters
+GAP_CHARS = 1_200       # the least room the work after a checkpoint gets in a reload
+PENDING_SECONDS = 15 * 60  # how long a launched checkpoint may take to land
 
 GENIE_DIR = STATE_HOME
 SESS_DIR = GENIE_DIR / "sessions"
 CKPT_RE = re.compile(r"(?:\bgenie(?:\.py)?[\"']?\s+checkpoint\b|python[\w.]*\s+\S*checkpoint\.py\b)")
-TRACK_RE = re.compile(r"--track[ =]+([A-Za-z0-9_-]+)")
+RECEIPT_RE = re.compile(r"\breceipt: (\d{10,}-[0-9a-f]{8})\b")
+RECEIPT_FAILED = "receipt: failed"
 
 
 # ---------------------------------------------------------------- settings
@@ -106,14 +115,20 @@ def limits(floor=0):
     return w, nudge_at(w, floor), int(w * CEILING_RATIO)
 
 
-def is_checkpoint(cmd):
-    if "--dry-run" in cmd:
-        return False
+def looks_like_checkpoint(cmd):
+    """The command names genie's checkpoint. That says where a save may sit in
+    the recording. It never proves one: `grep "genie checkpoint"` matches too."""
+    return "--dry-run" not in cmd and bool(CKPT_RE.search(cmd))
+
+
+def own_checkpoint(cmd):
+    """A command the project named as its checkpoint, in `checkpoint_pattern`.
+    It writes no receipt, so a match is all there is to go on."""
     extra = genie_paths.config().get("checkpoint_pattern")
     try:
-        return bool(CKPT_RE.search(cmd) or (extra and re.search(extra, cmd)))
+        return bool(extra and "--dry-run" not in cmd and re.search(extra, cmd))
     except re.error:
-        return bool(CKPT_RE.search(cmd))
+        return False
 
 
 # ---------------------------------------------------------------- transcript
@@ -186,6 +201,98 @@ def k(n):
     return f"{n / 1000:.0f}K"
 
 
+def clock(epoch):
+    return time.strftime("%H:%M", time.localtime(epoch or 0))
+
+
+# ---------------------------------------------------------------- receipts
+
+def file_size(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def response_text(d):
+    """What the tool printed, as plain text."""
+    def flat(x):
+        if isinstance(x, str):
+            return [x]
+        if isinstance(x, dict):
+            return [t for v in x.values() for t in flat(v)]
+        return [t for v in x for t in flat(v)] if isinstance(x, list) else []
+    return "\n".join(flat(d.get("tool_response")))
+
+
+def waiting_receipts(sid, d):
+    """Receipt files this session may take, oldest first. Its own folder, and
+    any receipt whose id the checkpoint printed in this very tool call. The
+    second way serves a shell that does not pass the session id on."""
+    found = []
+    folder = RECEIPTS / session_key(sid)
+    if folder.is_dir():
+        found += sorted(folder.glob("*.json"))
+    text = response_text(d)
+    if "receipt: " in text:
+        found += [p for m in RECEIPT_RE.finditer(text)
+                  if (p := RECEIPTS / "_" / f"{m.group(1)}.json").is_file()]
+    return found
+
+
+def mark_checkpoint(st, d, now, tokens, here, rec=None):
+    """Record a checkpoint in the session state. `here` is true when this very
+    tool call ran it. Otherwise it was launched earlier, in the background,
+    and the launch is where its state was written."""
+    launch = st.pop("pending", None) or {}
+    if here or now - launch.get("time", 0) > PENDING_SECONDS:
+        launch = {"call": d.get("tool_use_id") or "" if here else "", "tokens": tokens,
+                  "offset": file_size(d.get("transcript_path", ""))}
+    rec = rec or {}
+    st["ckpt_time"] = rec.get("time") or now
+    st["ckpt_tokens"] = launch.get("tokens") or tokens
+    st["nudged_at"] = None
+    st["held"] = False
+    st["ckpt"] = {"time": st["ckpt_time"], "track": rec.get("track", ""), "topic": rec.get("topic", ""),
+                  "call": launch.get("call", ""), "offset": launch.get("offset", 0),
+                  "state": bool(rec.get("entry"))}
+    if rec.get("track"):
+        st["track"] = rec["track"]
+    if rec.get("entry"):
+        st["saved"] = {"time": st["ckpt_time"], "track": rec["track"], "topic": rec.get("topic", ""),
+                       "entry": rec["entry"]}
+
+
+def claim(sid, st, d, now, tokens):
+    """Take every receipt that waits for this session. True when one was taken."""
+    cmd = str((d.get("tool_input") or {}).get("command", ""))
+    text = response_text(d)
+    here = looks_like_checkpoint(cmd)
+    launched = now - (st.get("pending") or {}).get("time", 0) <= PENDING_SECONDS
+    took = False
+    for path in waiting_receipts(sid, d):
+        rec = read_json(path, None)
+        try:
+            path.unlink()
+        except OSError:
+            continue  # another hook of this session has it
+        if isinstance(rec, dict):
+            # This call saved it when its id is in this call's output, or when the call names the
+            # checkpoint and none was launched earlier. The agent may have piped the id away.
+            mine = bool(rec.get("id")) and f"receipt: {rec['id']}" in text
+            mark_checkpoint(st, d, now, tokens, mine or (here and not launched), rec)
+            took = True
+    if took:
+        return True
+    if own_checkpoint(cmd) or (here and RECEIPT_FAILED in text):
+        mark_checkpoint(st, d, now, tokens, True)
+        return True
+    if here and not launched:
+        st["pending"] = {"call": d.get("tool_use_id") or "", "tokens": tokens, "time": now,
+                         "offset": file_size(d.get("transcript_path", ""))}
+    return False
+
+
 # ---------------------------------------------------------------- hooks
 
 def emit_context(event, text):
@@ -200,15 +307,7 @@ def on_post_tool(d, st, now):
         st["floor"] = min(tokens, st.get("floor") or tokens)
     win, soft, _ = limits(st.get("floor", 0))
     st["seen"] = now
-    cmd = str((d.get("tool_input") or {}).get("command", ""))
-    if is_checkpoint(cmd):
-        st["ckpt_time"] = now
-        st["ckpt_tokens"] = tokens
-        st["nudged_at"] = None
-        st["held"] = False
-        m = TRACK_RE.search(cmd)
-        if m and m.group(1) != "none":
-            st["track"] = m.group(1)
+    if claim(d.get("session_id"), st, d, now, tokens):
         return
     # A hold can come below the nudge point, because compaction is prepared early. Say so at once.
     if not tokens or (tokens < soft and not st.get("held")) or fresh(st, now, soft, tokens):
@@ -230,24 +329,28 @@ def on_post_tool(d, st, now):
         "After compaction your STATE.md is reloaded for you."))
 
 
+def log_line(text):
+    try:
+        with open(GENIE_DIR / "precompact.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
+    except OSError:
+        pass
+
+
 def log_pre_compact(d, st, now, tokens, is_fresh, holds, hold):
     """One line per PreCompact call, so a compaction that lost work can be
     traced to its cause: no checkpoint, a stale one, or the hold cap."""
     ck = st.get("ckpt_time")
     age = f"{(now - ck) / 60:.0f}m" if ck else "-"
-    line = (f"{time.strftime('%Y-%m-%d %H:%M:%S')} {str(d.get('session_id', ''))[:8]} "
-            f"trigger={d.get('trigger')} tokens={tokens} ckpt_tokens={st.get('ckpt_tokens')} "
-            f"ckpt_age={age} fresh={is_fresh} holds={holds} -> {'HOLD' if hold else 'pass'}\n")
-    try:
-        with open(GENIE_DIR / "precompact.log", "a", encoding="utf-8") as f:
-            f.write(line)
-    except OSError:
-        pass
+    log_line(f"{str(d.get('session_id', ''))[:8]} "
+             f"trigger={d.get('trigger')} tokens={tokens} ckpt_tokens={st.get('ckpt_tokens')} "
+             f"ckpt_age={age} fresh={is_fresh} holds={holds} -> {'HOLD' if hold else 'pass'}")
 
 
 def on_pre_compact(d, st, now):
     _, soft, ceiling = limits()
     tokens = context_tokens(d.get("transcript_path", "")) or st.get("tokens", 0)
+    claim(d.get("session_id"), st, d, now, tokens)  # a background checkpoint may have landed since the last call
     is_fresh = fresh(st, now, soft, tokens)
     holds = st.get("holds", 0)
     hold = (d.get("trigger") == "auto" and tokens and tokens < ceiling
@@ -256,11 +359,14 @@ def on_pre_compact(d, st, now):
     if hold:
         st["holds"] = holds + 1
         st["held"] = True
+        st.pop("pass", None)  # an earlier pass led to no compaction, so it marks nothing
         last = st.get("ckpt_tokens")
         why = (f"the last checkpoint was at {k(last)}" if last and st.get("ckpt_time", 0) >= st.get("compacted_at", 0)
                else "no checkpoint yet")
         return 2, (f"genie: holding compaction at {k(tokens)}, {why}. "
                    "Run the genie:checkpoint skill now, then carry on")
+    # Claude Code keeps what is written from about here on, word for word. See genie_recall.gap.
+    st["pass"] = {"time": now, "offset": file_size(d.get("transcript_path", ""))}
     track = st.get("track")
     since = time.strftime("%H:%M", time.localtime(st["ckpt_time"])) if is_fresh else None
     out = [
@@ -326,41 +432,108 @@ def digest_lines(cfg):
     return [x for x in out if x]
 
 
-def on_session_start(d, st, now, cfg):
-    digest, briefs, gates = digest_lines(cfg), lab_briefs(), open_gate_line()
+def state_block(st):
+    """This session's own last state, else the newest one on file for its track."""
+    saved, track = st.get("saved"), st.get("track")
+    if saved:
+        entry = saved["entry"]
+        cut = (f"\n... cut at {STATE_CHARS} characters. The rest is in tracks/{saved['track']}/STATE.md"
+               if len(entry) > STATE_CHARS else "")
+        return (f"Track: {saved['track']}. Your checkpoint of {clock(saved['time'])} ({saved['topic']}), "
+                f"word for word:\n\n{entry[:STATE_CHARS]}{cut}")
+    body = newest_checkpoint(track, genie_paths.checkout()) if track else ""
+    if body:
+        return (f"Track: {track}. This session saved no state of its own. Newest checkpoint in "
+                f"tracks/{track}/STATE.md, which may be another session's:\n\n{body}")
+    return "No track checkpoint is on file for this session. Work from the summary above."
+
+
+def gap_block(st, path, prev, room):
+    """The work between the last checkpoint and the messages Claude Code kept."""
+    import genie_recall
+    ck = st.get("ckpt") or {}
+    if ck.get("time", 0) < prev:
+        ck = {}  # saved before the compaction before this one, so it covers nothing here
+    went = st.get("pass") or {}
+    found = genie_recall.gap(path, call=ck.get("call", ""), ckpt_time=ck.get("time", 0),
+                             hint=ck.get("offset", 0) or st.get("compact_offset", 0), after=prev + 30,
+                             stop=went.get("offset", 0) if went.get("time", 0) > prev else 0,
+                             root=st.get("root", ""))
+    log_line(f"{str(st.get('sid', ''))[:8]} reload ckpt={clock(ck['time']) if ck else '-'} "
+             f"end={found['how']} lines={len(found['items'])} cut={found['cut']}")
+    if not found["items"]:
+        return ("Nothing happened between that checkpoint and the messages you still have. "
+                "The state is complete.") if ck and not found["cut"] else ""
+    head = ("Work after that checkpoint and before the messages you still have, from the recording:" if ck
+            else "No checkpoint covers this stretch. Work before the messages you still have, from the recording:")
+    tail = ["These lines are newer than the state. Where they disagree, they win."] if ck else []
+    if found["how"] == "pass":
+        tail.append("The last few of these lines may repeat messages you still have.")
+    elif found["how"] == "end":
+        tail.append("Some of these lines may repeat messages you still have.")
+    if found["cut"]:
+        tail.append("The recording is large, so the oldest part of this stretch is not listed.")
+    tail.append("Full text of a line: `genie recall --at <number>`. Search the recording: `genie recall <words>`.")
+    return "\n".join([head, genie_recall.render(found["items"], room - len(head) - sum(len(t) + 1 for t in tail) - 2)]
+                     + tail)
+
+
+def on_session_start(d, st, now, cfg, pre):
+    digest, briefs, gates = pre
     lab_note = ["GENIE: if you work on one of these tracks, that line is where you are. "
                 "Do not redo work the lab already records."] if briefs else []
-    if d.get("source") != "compact":
-        return "\n".join(digest + briefs + lab_note + gates)
+    source, alive = d.get("source"), cfg["hooks"].get("keep_alive")
+    path = d.get("transcript_path") or st.get("transcript") or ""
+    if alive:
+        claim(d.get("session_id"), st, d, now, st.get("tokens", 0))
+    if source != "compact":
+        mine = []
+        if alive and source == "resume" and st.get("ckpt"):
+            ck = st["ckpt"]
+            mine = [f"GENIE: resumed. Your last checkpoint was at {clock(ck['time'])} ({ck['topic']}).",
+                    state_block(st),
+                    "`genie recall <words>` searches this session's recording. "
+                    "`genie recall --gap` lists the work after that checkpoint.", ""]
+        return "\n".join(mine + digest + briefs + lab_note + gates)
+    prev = st.get("compacted_at", 0)
     st["compacted_at"] = now
     st.pop("floor", None)
     st["compactions"] = st.get("compactions", 0) + 1
     st["nudged_at"] = None
     st["holds"] = 0
     st["held"] = False
-    if not cfg["hooks"].get("keep_alive"):
+    if not alive:
         return "\n".join(digest + briefs + gates)
     track = st.get("track")
     lines = ["GENIE: this session was just compacted. Carry on with the work now.",
              "Do not wait for the human unless a gate applies (push, submission, secret, spending).",
-             "Restart any `genie board wait` or `genie bridge wait` you had running."]
-    body = newest_checkpoint(track, genie_paths.checkout()) if track else ""
-    if body:
-        lines.append(f"Track: {track}. Latest checkpoint from tracks/{track}/STATE.md:\n\n{body}")
-    else:
-        lines.append("No track checkpoint is on file for this session. Work from the summary above.")
+             "Restart any `genie board wait` or `genie bridge wait` you had running.",
+             state_block(st)]
+    ck = st.get("ckpt") or {}
+    if ck and not ck.get("state") and ck.get("time", 0) >= prev:
+        lines.append(f"Your last checkpoint ({clock(ck['time'])}, {ck['topic'] or 'no topic'}) "
+                     "filed notes only, with no track state.")
+    after = []
     if track:
         try:
             import genie_lab
             if (genie_lab.lab_dir(track) / "genie.toml").exists():
-                lines.append("\nWhere the lab stands:\n" + genie_lab.render_next(track))
+                after.append("\nWhere the lab stands:\n" + genie_lab.render_next(track))
         except Exception:
             pass
     else:
-        lines.extend(briefs)
-    lines.extend(gates)
+        after.extend(briefs)
+    after.extend(gates)
+    used = len("\n".join(lines + after))
+    try:
+        block = gap_block(st, path, prev, max(GAP_CHARS, HOOK_OUT_CHARS - used - 40))
+    except Exception as exc:  # the state above must arrive even when the recording cannot be read
+        block = f"GENIE: could not read the recording for work after the checkpoint ({exc})."
+    if block:
+        lines += ["", block]
+    st["compact_offset"] = file_size(path)
     # The checkpoint matters most after a compaction, so the digest gets what is left.
-    text = "\n".join(lines)
+    text = "\n".join(lines + after)
     room = HOOK_OUT_CHARS - len(text)
     extra = "\n".join(digest)
     return text + ("\n\n" + extra[:room - 2] if digest and room > 400 else "")
@@ -396,18 +569,27 @@ def cmd_hook(_args):
     if d.get("agent_id"):
         return 0  # a subagent has its own context
     now = time.time()
-    st = load_state(sid)
     code, err, text = 0, "", ""
-    try:
-        if event == "PostToolUse" and on.get("keep_alive"):
-            on_post_tool(d, st, now)
-        elif event == "PreCompact" and on.get("keep_alive"):
-            code, err = on_pre_compact(d, st, now)
-        elif event == "SessionStart":
-            text = on_session_start(d, st, now, cfg)
-    except Exception as exc:  # a broken hook must never stop a session
-        code, err = 0, f"genie hook error: {exc}"
-    save_state(sid, st)
+    # The slow part of a session start reads no session state, so it runs before the lock.
+    pre = (digest_lines(cfg), lab_briefs(), open_gate_line()) if event == "SessionStart" else None
+    # Claude Code runs the hooks of parallel tool calls at once. One at a time per session,
+    # or two of them read the same state and the later write drops the earlier one.
+    with Lock(SESS_DIR / f"{session_key(sid)}.lock"):
+        st = load_state(sid)
+        st["sid"] = sid
+        if d.get("transcript_path"):
+            st["transcript"] = d["transcript_path"]
+        st["root"] = str(genie_paths.checkout())
+        try:
+            if event == "PostToolUse" and on.get("keep_alive"):
+                on_post_tool(d, st, now)
+            elif event == "PreCompact" and on.get("keep_alive"):
+                code, err = on_pre_compact(d, st, now)
+            elif event == "SessionStart":
+                text = on_session_start(d, st, now, cfg, pre)
+        except Exception as exc:  # a broken hook must never stop a session
+            code, err = 0, f"genie hook error: {exc}"
+        save_state(sid, st)
     if text:
         sys.stdout.buffer.write((text[:HOOK_OUT_CHARS] + "\n").encode("utf-8"))
     if err:
@@ -749,7 +931,9 @@ def cmd_status(args):
             state = "YOUR TURN"
         else:
             state = "quiet"
-        ck = max(st.get("ckpt_time", 0), to_epoch(ckpt_ts))
+        # A session that ran the hooks knows its saved checkpoints. For any other, a
+        # command that names the checkpoint is the best guess there is.
+        ck = st.get("ckpt_time", 0) if st else to_epoch(ckpt_ts)
         flag = " !" if tokens >= nudge_at(w, st.get("floor", 0)) else ""
         size = k(tokens) + flag if tokens else "compacted"
         rows.append(((title or p.stem[:8])[:34], size, state, ago(last, now),
@@ -881,7 +1065,8 @@ def run_lab(args):
 
 
 PASS = {"bridge": "bridge", "board": "board", "watch": "genie_watch", "dash": "genie_dash",
-        "vault": "vault", "checkpoint": "checkpoint", "second-opinion": "second_opinion"}
+        "vault": "vault", "checkpoint": "checkpoint", "second-opinion": "second_opinion",
+        "recall": "genie_recall"}
 
 
 def main(argv=None):
