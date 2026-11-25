@@ -1,0 +1,24 @@
+{
+  "name": "genie",
+  "displayName": "Genie",
+  "version": "0.1.0",
+  "description": "Run a fleet of Claude Code sessions for days: one overseer you talk to, one owner per track, one operator for outside actions, and memory on disk that survives compaction.",
+  "author": {
+    "name": "Poyraz Yongaci",
+    "url": "https://github.com/poyrazyongaci"
+  },
+  "homepage": "https://github.com/poyrazyongaci/genie",
+  "repository": "https://github.com/poyrazyongaci/genie",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "multi-agent",
+    "orchestration",
+    "overseer",
+    "long-running",
+    "compaction",
+    "checkpoint",
+    "hooks",
+    "skills"
+  ]
+}

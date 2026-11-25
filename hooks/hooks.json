@@ -1,0 +1,55 @@
+{
+  "description": "Genie keep-alive, notes digest and gate rules. Every hook exits at once in a project without .genie/config.json.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.genie/config.json\" ] || exit 0; exec sh \"${CLAUDE_PLUGIN_ROOT}/bin/genie\" hook",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.genie/config.json\" ] || exit 0; exec sh \"${CLAUDE_PLUGIN_ROOT}/bin/genie\" hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Read|Edit|Write|Agent|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.genie/config.json\" ] || exit 0; exec sh \"${CLAUDE_PLUGIN_ROOT}/bin/genie\" hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.genie/config.json\" ] || exit 0; exec sh \"${CLAUDE_PLUGIN_ROOT}/bin/genie\" hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

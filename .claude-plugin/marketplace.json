@@ -1,0 +1,19 @@
+{
+  "name": "genie",
+  "owner": {
+    "name": "Poyraz Yongaci",
+    "url": "https://github.com/poyrazyongaci"
+  },
+  "metadata": {
+    "description": "Run a fleet of Claude Code sessions that keep working together"
+  },
+  "plugins": [
+    {
+      "name": "genie",
+      "source": "./",
+      "description": "One overseer, one owner per track, one operator for outside actions, and memory on disk that survives compaction",
+      "category": "workflow",
+      "tags": ["multi-agent", "orchestration", "long-running", "hooks", "skills"]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+name: Field report
+description: You ran a fleet. Tell us what worked and what did not
+labels: [field-report]
+body:
+  - type: textarea
+    attributes:
+      label: The run
+      description: Hours, sessions, what the work was
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What worked, with counts
+  - type: textarea
+    attributes:
+      label: What did not work

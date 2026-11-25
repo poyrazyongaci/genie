@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet board</title>
+<style>
+:root{
+  --bg:#f6f5f1; --panel:#ffffff; --ink:#1c1d21; --mute:#676b74; --line:#d9d7cf;
+  --accent:#2b5fd9; --good:#1f8a4c; --warn:#b26a00; --bad:#c2362b;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#121317; --panel:#1b1d23; --ink:#e9e9ec; --mute:#9aa0ab; --line:#30333c;
+    --accent:#7ea2ff; --good:#58c486; --warn:#e2a548; --bad:#f0776c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 48px}
+header{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:baseline;justify-content:space-between;
+  border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:20px}
+h1{font-size:22px;margin:0;letter-spacing:-.01em}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute);margin:30px 0 10px}
+.meta{color:var(--mute);font-size:13px}
+.clock{font-variant-numeric:tabular-nums;font-weight:650;font-size:18px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card h3{margin:0 0 2px;font-size:15px}
+.owner{color:var(--mute);font-size:12px;margin-bottom:10px}
+.big{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.sub{color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin-top:10px;font-size:13px}
+.kv dt{color:var(--mute)} .kv dd{margin:0;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:11px;font-weight:650;padding:1px 7px;border-radius:99px;border:1px solid currentColor}
+.good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)} .mute{color:var(--mute)}
+.path{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);font-size:13px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.tw{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mute);font-weight:600;font-size:12px}
+tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+code{font:12px ui-monospace,Consolas,monospace}
+footer{margin-top:28px;color:var(--mute);font-size:12px}
+
+.feed{display:grid;gap:8px}
+.post{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:13px}
+.post .hd{display:flex;gap:10px;flex-wrap:wrap;color:var(--mute);font-size:12px;margin-bottom:4px}
+.post .bd{white-space:pre-wrap;overflow-wrap:anywhere}
+.latest{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);font-size:12.5px;overflow-wrap:anywhere}
+.latest .hd{color:var(--mute);font-size:11px;margin-bottom:3px}
+.live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--good);margin-right:6px}
+.live.off{background:var(--bad)}
+td.wrap{overflow-wrap:anywhere;min-width:220px}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1 id="title">Fleet board</h1>
+    <div class="meta"><span class="live" id="dot"></span><span id="stamp">loading</span></div>
+  </div>
+  <div class="clock" id="left"></div>
+</header>
+
+<h2>Waiting on you</h2>
+<div class="tw"><table id="gates"></table></div>
+
+<h2>Tracks</h2>
+<div class="cards" id="cards"></div>
+
+<h2>Open requests between sessions</h2>
+<div class="tw"><table id="open"></table></div>
+
+<h2>Sessions on this machine</h2>
+<div class="tw"><table id="sessions"></table></div>
+
+<div class="cols">
+<div><h2>Labs</h2><div class="tw"><table id="labs"></table></div></div>
+<div><h2>Track handoff state</h2><div class="tw"><table id="tracks"></table></div></div>
+</div>
+
+<h2>Latest answers</h2>
+<div class="feed" id="feed"></div>
+
+<footer>Sources: the status board in the hub note (changes at checkpoints), the local board, the bridge as of the last fetch, the gate queues and <code>genie status</code>. No model calls.</footer>
+</main>
+<script>
+(function(){
+  var END = null;
+  function $(id){ return document.getElementById(id); }
+  function el(tag, cls, text){ var e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+  function ago(iso){
+    var t = typeof iso==="number" ? iso*1000 : Date.parse(iso); if(!t) return "";
+    var m = Math.max(0, Math.round((Date.now()-t)/60000));
+    return m<1 ? "just now" : m<60 ? m+" min ago" : (m/60).toFixed(1)+" h ago";
+  }
+  function clock(){
+    if(!END){ $("left").textContent=""; return; }
+    var ms = END-Date.now(); if(ms<=0){ $("left").textContent="Deadline passed"; return; }
+    var h=Math.floor(ms/3600000), m=Math.floor(ms%3600000/60000);
+    $("left").textContent = h+" h "+(m<10?"0":"")+m+" min left";
+  }
+  function table(id, head, rows, wrapCols){
+    var t=$(id); t.replaceChildren();
+    var tr=el("tr"); head.forEach(function(h){ tr.appendChild(el("th",null,h)); }); t.appendChild(tr);
+    if(!rows.length){ var r=el("tr"); var c=el("td","mute","nothing"); c.colSpan=head.length; r.appendChild(c); t.appendChild(r); }
+    rows.forEach(function(row){
+      var r=el("tr");
+      row.forEach(function(c,i){
+        var td=el("td",(wrapCols||[]).indexOf(i)>=0?"wrap":"num",c);
+        if(c==="YOUR TURN") td.className="num warn";
+        r.appendChild(td);
+      });
+      t.appendChild(r);
+    });
+  }
+  function posts(id, list){
+    var box=$(id); box.replaceChildren();
+    if(!list.length) box.appendChild(el("div","post mute","nothing yet"));
+    list.forEach(function(f){
+      var p=el("div","post"), hd=el("div","hd");
+      hd.appendChild(el("b",null,"E"+f.n+" "+f.state));
+      hd.appendChild(el("span",null,f.frm+" to "+f.to));
+      hd.appendChild(el("span",null,ago(f.at)));
+      p.appendChild(hd); p.appendChild(el("div","bd",f.body)); box.appendChild(p);
+    });
+  }
+  function render(d){
+    END = d.deadline ? Date.parse(d.deadline) : null; clock();
+    $("title").textContent = d.title;
+    table("gates",["Gate","Kind","Scope","What","Asked by"],
+      d.gates.map(function(g){ return [g.id,g.kind,g.scope,g.what,g.by]; }),[3]);
+    var cards=$("cards"); cards.replaceChildren();
+    if(!d.status.length) cards.appendChild(el("div","card mute","No tracks yet. Run genie track add."));
+    d.status.forEach(function(r){
+      var c=el("div","card");
+      c.appendChild(el("h3",null,r.track));
+      c.appendChild(el("div","owner","Owner: "+(r.owner||"nobody")));
+      c.appendChild(el("div","sub",r.outside||"no outside score"));
+      var dl=el("dl","kv");
+      [["Best local",r.local||"none"],["Next",r.next||"not set"]].forEach(function(kv){ dl.appendChild(el("dt",null,kv[0])); dl.appendChild(el("dd",null,kv[1])); });
+      c.appendChild(dl); cards.appendChild(c);
+    });
+    table("open",["Board","Epoch","State","From","To","Opened","Asks","Latest note"],
+      d.open.map(function(o){ return [o.where,"E"+o.n,o.state,o.frm,o.to,ago(o.at),o.subject,o.latest]; }),[6,7]);
+    posts("feed", d.feed);
+    var g=d.genie||{};
+    [["sessions",[0]],["labs",[6]],["tracks",[2,3]]].forEach(function(s){
+      var x=g[s[0]]; table(s[0], x?x.head:["genie status gave nothing"], x?x.rows:[], s[1]);
+    });
+    $("stamp").textContent="updated "+new Date(d.now*1000).toLocaleTimeString()+", status board last written "+ago(d.board_mtime);
+    $("dot").className="live";
+  }
+  function load(){
+    fetch("data.json",{cache:"no-store"}).then(function(r){ return r.json(); }).then(function(d){
+      if(d.error) throw new Error(d.error); render(d);
+    }).catch(function(e){ $("dot").className="live off"; $("stamp").textContent="no data: "+e.message; });
+  }
+  clock(); load(); setInterval(clock,30000); setInterval(load,30000);
+})();
+</script>
+</body>
+</html>

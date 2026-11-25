@@ -1,0 +1,12 @@
+#!/bin/sh
+# One command for everything in the kit. Picks one Python and stays with it.
+# A `python3 x || python x` chain is wrong here: a hook that exits 2 on purpose
+# would fall through to the second interpreter and lose its exit code.
+self=$0
+while [ -h "$self" ]; do
+  link=$(readlink "$self")
+  case $link in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac
+done
+here=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)
+if python3 -c 0 2>/dev/null; then PY=python3; else PY=python; fi
+exec "$PY" "$here/../scripts/genie.py" "$@"

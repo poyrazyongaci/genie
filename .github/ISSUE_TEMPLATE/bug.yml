@@ -1,0 +1,22 @@
+name: Bug
+description: Something did not work
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Output of `genie doctor` and `claude --version`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: How to see it again
+  - type: textarea
+    attributes:
+      label: Lines from ~/.claude/genie/precompact.log, if it is about compaction
+      render: text
