@@ -20,6 +20,13 @@ Try a cache.
 >>> score 41 s | 44 s | a1b2c3d | batch 64
 """
 
+LINKED = """## Next
+Measure the cache.
+===DURABLE===
+>>> finding api-cache | Cache needs batch 64 | status: draft
+Builds on [[api-batch-size]]. Not a link: `[[api-nothing]]`.
+"""
+
 
 class NotesTest(ProjectTest):
     def test_init_is_idempotent_and_never_overwrites(self):
@@ -87,6 +94,44 @@ class NotesTest(ProjectTest):
         self.assertIn("0 errors", self.g("vault", "check"))
         self.g("checkpoint", "--track", "api", "dry", "--dry-run", stdin=ENTRY)
         self.assertNotIn("dry", (self.top / "tracks" / "api" / "TIMELINE.md").read_text())
+
+    def test_links_go_both_ways(self):
+        self.g("init")
+        self.g("track", "add", "api", "The API")
+        self.g("track", "add", "web")
+        self.g("checkpoint", "--track", "api", "batch", stdin=ENTRY)
+        self.assertIn("0 errors", self.g("checkpoint", "--track", "api", "cache", stdin=LINKED))
+        self.g("checkpoint", "--track", "web", "start", stdin="## Next\n- go\n===DURABLE===\n>>> none: x\n")
+        head, back = self.g("vault", "links", "api-batch-size").split("Linked from")
+        self.assertEqual(head.splitlines()[:2], ["notes/findings/api-batch-size.md",
+                                                 "[confirmed] api-batch-size (api): 64 beats 16"])
+        self.assertIn("Links to 0 notes.", head)                   # the link back to the hub says nothing
+        self.assertTrue(back.startswith(" 3 notes:"), back)
+        for part in ("notes/overview.md:", "tracks/api/TIMELINE.md:", "| batch | Try a cache. | [[api-batch-size]]",
+                     "notes/findings/api-cache.md:15  Builds on [[api-batch-size]]. Not a link: `[[api-nothing]]`."):
+            self.assertIn(part, back)                              # the line that holds the link, as written
+        out = self.g("vault", "links", "notes/findings/api-cache.md")
+        self.assertIn("Links to 1 note:\n  [confirmed] api-batch-size (api): 64 beats 16", out)
+        self.assertNotIn("api-nothing", out)                       # a link inside code is not a link
+        out = self.g("vault", "links", "STATE", ok=False)          # a name two notes share
+        for part in ("2 notes are named `STATE`", "tracks/api/STATE.md", "tracks/web/STATE.md"):
+            self.assertIn(part, out)
+        self.assertTrue(self.g("vault", "links", "api/STATE").startswith("tracks/api/STATE.md\n"))
+        self.assertTrue(self.g("vault", "links", str(self.top / "tracks" / "web" / "STATE.md"))
+                        .startswith("tracks/web/STATE.md\n"))
+        self.assertIn("notes/findings/api-batch-size.md", self.g("vault", "links", "api-batch", ok=False))
+        self.assertIn("left out", self.g("vault", "links", "overview"))
+        every = self.g("vault", "links")
+        self.assertLess(every.index("api-batch-size"), every.index("api-cache"))    # most linked first
+        self.assertIn("    3    0  [confirmed] api-batch-size", every)
+        self.assertIn("genie vault links <note>", self.g("vault", "index"))
+        for n in range(6):                                         # a long log adds its newest lines only
+            self.g("checkpoint", "--track", "api", f"again {n}", stdin=ENTRY)
+        out = self.g("vault", "links", "api-batch-size")
+        self.assertIn("tracks/api/TIMELINE.md: 2 earlier lines left out", out)
+        self.assertNotIn("| again 0 |", out)
+        self.assertIn("| again 5 |", out)
+        self.assertIn("| again 0 |", self.g("vault", "links", "api-batch-size", "--all"))
 
     def test_checkpoint_refuses_before_writing(self):
         self.g("init")

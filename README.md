@@ -93,6 +93,7 @@ command, `genie`, which Claude runs from its Bash tool. `genie help` lists it al
 | a detail is gone after compaction | `genie recall` searches the recording, which a compaction does not touch |
 | a command that only names a checkpoint releases the hold | only a saved checkpoint counts. It leaves a receipt for the hooks |
 | nobody can say how a track got here | every checkpoint adds a row to `TIMELINE.md`, never trimmed |
+| nobody can say what a finding rests on or who used it | `genie vault links <note>` lists what a note links to and every line that links to it |
 | a hold could trap a session | it lets go at 96 percent, or after 25 holds |
 | nobody knows what window is worth it | `genie window` measures your own sessions and prices each size |
 
@@ -135,7 +136,7 @@ Genie comes out of one 48 hour, four-track contest with two people. The
 | Keep-alive hooks | 64 of 70 compactions it let through had a fresh checkpoint |
 | Watcher | replaced a five minute model poll |
 | Labs | scorer trust checks ran on real tracks. The keep or revert loop was **not** exercised there: no row was ever kept |
-| This plugin | a cleaned-up port. 80 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. In two later sessions saved checkpoints released the hold, and one reload listed the two steps done after the checkpoint, which the agent then did not redo. A human message in that stretch is covered by unit tests only. No long run and no full fleet on it yet |
+| This plugin | a cleaned-up port. 82 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. In two later sessions saved checkpoints released the hold, and one reload listed the two steps done after the checkpoint, which the agent then did not redo. A human message in that stretch is covered by unit tests only. No long run and no full fleet on it yet |
 
 ## What it touches
 

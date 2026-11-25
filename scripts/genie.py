@@ -13,7 +13,7 @@ Every day
   genie status                           sessions, tracks and labs at a glance
   genie checkpoint --track <slug> "..."  save state and file what was learned (stdin)
   genie recall <words> | --gap | --at N  read this session's recording back
-  genie vault index | check              the shared notes: digest, lint
+  genie vault index | check | links      the shared notes: digest, lint, what links to what
   genie board ... | bridge ...           mail between sessions, on one machine or over git
   genie watch [--once | --alive]         no-model watcher, exits when something needs a look
   genie dash [port]                      live page on localhost

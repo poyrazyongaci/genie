@@ -69,6 +69,22 @@ checkpoint, oldest first, and is never trimmed. Each row links the findings
 that checkpoint filed, so the notes open as a graph in Obsidian. Cross-track
 work goes to `notes/timeline.md`.
 
+## Follow a note's connections
+
+```bash
+genie vault links api-batch-size   # what it links to, and each line that links to it
+genie vault links api/STATE        # a path, for a name that several notes share
+genie vault links                  # every note, the most linked first
+```
+
+The lines that link to a finding are its history: the timeline rows that filed
+it, the findings that build on it, the hub line that lists it. A long log adds
+its 5 newest lines, and `--all` lifts every cap. Every note links back to the
+hub, so that one link is left out.
+
+The command reads the files and needs no Obsidian. With the app open, Obsidian
+1.12 and later answers the same question with `obsidian backlinks file=<note>`.
+
 ## Helpers
 
 A helper is a second session or subagent that only reads: labels data, replays

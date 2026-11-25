@@ -15,6 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com). Versions follow semver.
 - `tracks/<slug>/TIMELINE.md` and `notes/timeline.md`, one row per checkpoint,
   never trimmed
 - A resumed session gets its last state and the recall commands
+- `genie vault links <note>` lists what a note links to and every line that
+  links to it. Without a note it lists every note, the most linked first
 
 ### Changed
 

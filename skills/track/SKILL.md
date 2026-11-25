@@ -16,6 +16,8 @@ missing, `genie recall <words>` searches this session's recording.
 
 1. Read `tracks/<slug>/README.md`, then `STATE.md` if it exists. Read the
    digest's findings that name your track before redoing anything.
+   `genie vault links <finding>` shows what a finding builds on and every
+   line that cites it.
 2. If the work has a score, use the `genie:lab` skill. `genie next --track <slug>`
    tells you where you are.
 3. Find the overseer (a session named overseer). Report to it, ask it, and send
