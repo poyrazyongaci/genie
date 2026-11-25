@@ -196,7 +196,8 @@ def on_post_tool(d, st, now):
         if m and m.group(1) != "none":
             st["track"] = m.group(1)
         return
-    if not tokens or tokens < soft or fresh(st, now, soft, tokens):
+    # A hold can come below SOFT, because compaction is prepared early. Say so at once.
+    if not tokens or (tokens < soft and not st.get("held")) or fresh(st, now, soft, tokens):
         return
     last = st.get("nudged_at")
     if last is not None and tokens < last:

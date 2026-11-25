@@ -60,6 +60,11 @@ class KeepAliveTest(ProjectTest):
         self.assertEqual(code, 2)
         self.assertIn("last checkpoint was at 185K", err)
 
+    def test_a_hold_below_the_nudge_point_is_told_at_once(self):
+        self.g("init")
+        self.assertEqual(self.compact(150_000)[0], 2)
+        self.assertIn("on hold", self.bash("ls", 151_000)[1])
+
     def test_never_traps_a_session(self):
         self.g("init")
         self.assertEqual(self.compact(245_000)[0], 0)              # past the ceiling

@@ -81,7 +81,9 @@ paid again after each compaction.
 Choosing the window: every call re-reads the context, so a big window costs
 more per call. Each compaction costs the base that is loaded again. The usable
 room is the window minus that base, so a small window compacts constantly.
-Measure your base before lowering it.
+Measure your base before lowering it. A small window
+also leaves little room between the hold and the ceiling. At 100K one large file
+read can jump across it. 200K or more is a better floor.
 
 ## Board and bridge protocol
 
