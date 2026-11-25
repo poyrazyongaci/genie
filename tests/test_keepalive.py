@@ -65,6 +65,41 @@ class KeepAliveTest(ProjectTest):
         self.assertEqual(self.compact(150_000)[0], 2)
         self.assertIn("on hold", self.bash("ls", 151_000)[1])
 
+    def test_nudge_leaves_room_before_compaction_at_any_window(self):
+        for window, quiet, nudged in ((250_000, 175_000, 182_000), (500_000, 390_000, 400_000),
+                                      (1_000_000, 825_000, 835_000)):
+            self.g("init")
+            self.g("on", "--window", str(window))
+            (self.home / ".claude" / "genie" / "sessions" / "s1.json").unlink(missing_ok=True)
+            self.assertEqual(self.bash("ls", 60_000)[1], "")       # sets the floor
+            self.assertEqual(self.bash("ls", quiet)[1], "", window)
+            self.assertIn("genie:checkpoint", self.bash("ls", nudged)[1], window)
+
+    def test_nudge_counts_from_the_floor(self):
+        self.g("init")
+        self.g("on", "--window", "150000")
+        self.assertEqual(self.bash("ls", 103_000)[1], "")          # no work done yet, so nothing to save
+        self.assertEqual(self.state()["floor"], 103_000)
+        self.assertEqual(self.bash("ls", 120_000)[1], "")
+        self.assertIn("genie:checkpoint", self.bash("ls", 124_000)[1])
+
+    def test_floor_is_taken_again_after_a_compaction(self):
+        self.g("init")
+        self.bash("ls", 40_000)
+        self.bash("ls", 90_000)
+        self.assertEqual(self.state()["floor"], 40_000)
+        self.hook("SessionStart", source="compact")
+        self.assertNotIn("floor", self.state())
+        self.bash("ls", 103_000)
+        self.assertEqual(self.state()["floor"], 103_000)
+
+    def test_a_high_floor_never_hides_the_nudge(self):
+        self.g("init")                                             # hooks joined a session already at 210K
+        self.bash("ls", 210_000)
+        self.assertIn("genie:checkpoint", self.bash("ls", 218_000)[1])
+        self.g("on", "--window", "100000")
+        self.assertIn("genie:checkpoint", self.bash("ls", 240_000)[1])
+
     def test_never_traps_a_session(self):
         self.g("init")
         self.assertEqual(self.compact(245_000)[0], 0)              # past the ceiling

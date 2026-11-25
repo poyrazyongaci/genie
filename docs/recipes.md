@@ -55,6 +55,33 @@ give it the facts and not the theory.
 
 ## Spend less
 
+`genie window` measures your sessions and prices every window size. It changes
+nothing. Apply a size with `genie on --window <tokens>`, then restart and resume
+the sessions. `genie off` removes the limit.
+
+A bigger window means every request reads more from the cache. A smaller one
+means more restarts, and each one writes the floor to the cache again. The floor
+is the context right after a compaction, not the size of a first hello.
+
+```
+trigger = floor + sqrt(2 * growth * (restart + read * floor) / read)
+window  = trigger / 0.87
+```
+
+Measured on the contest's sessions: floor 103K, growth 1,863 tokens per request.
+
+| Window | Fable 5.2, $ per 1,000 requests | Opus 5.5 |
+|---|---|---|
+| 150K | 216 | 121 |
+| 250K | 132 | 82 |
+| 325K | **128** | 84 |
+| 500K | 136 | 95 |
+| 1M | 177 | 137 |
+
+The curve is flat near its best point, so do not tune by hand. A window close to
+the floor is the costly mistake.
+
+
 - Fewer sessions. Two good tracks beat five thin ones
 - Keep the session-start digest and your own CLAUDE.md short, they are paid for
   after every compaction

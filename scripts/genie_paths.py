@@ -20,6 +20,8 @@ HOME = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or Path.home
 # Session state is per machine, not per project, and survives plugin updates.
 STATE_HOME = Path(os.environ.get("GENIE_HOME") or HOME / ".claude" / "genie")
 
+COMPACT_RATIO = 0.87   # Claude Code compacts at this share of the window (measured, undocumented)
+
 DEFAULTS = {
     "version": 1,
     # Claude Code compacts at about 87 percent of this many tokens.

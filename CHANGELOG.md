@@ -4,6 +4,21 @@ Format: [Keep a Changelog](https://keepachangelog.com). Versions follow semver.
 
 ## Unreleased
 
+### Added
+
+- `genie window` measures the floor, growth and cache use of your own sessions
+  and prices every compaction window
+
+### Changed
+
+- The checkpoint nudge comes 36K tokens before compaction. It was 72 percent of
+  the window, which was too early on big windows and too late on small ones
+- After a compaction the nudge waits for 20K tokens of new work
+
+### Fixed
+
+- The field report's share of cache reads
+
 ## 0.1.0
 
 First release as a plugin. Ported from the scripts of a 48 hour contest.

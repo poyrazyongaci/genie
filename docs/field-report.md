@@ -64,7 +64,8 @@ periods are not a controlled comparison. The work had moved on.
 - Compaction starts near 87 percent of the configured window
 - Median context was 215K tokens before a compaction and 99K at the first call
   after it. The base that is loaded again is the cost lever, not the threshold
-- Cache reads were about 66 percent of main session spend
+- At the API prices of 2026-11-24 the six main sessions cost 41 percent cache
+  writes, 32 percent output and 27 percent cache reads, summary calls not counted
 - A background precompute can fire the hook near 195K for a compaction applied
   near 218K, so a checkpoint judged fresh may still miss some work
 

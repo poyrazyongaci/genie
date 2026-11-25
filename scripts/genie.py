@@ -6,6 +6,8 @@ Set up
   genie track add <slug> ["title"]       a folder, a README and a status board row
   genie doctor                           check the install
   genie on | off                         keep-alive for this project
+  genie on --window <tokens>             and set where compaction starts
+  genie window                           what window is worth it, from your own sessions
 
 Every day
   genie status                           sessions, tracks and labs at a glance
@@ -32,7 +34,8 @@ Scored work (see genie_lab.py, all take --track <slug>)
 Keep-alive, how it works
   1. `autoCompactWindow` makes Claude Code compact near 87 percent of WINDOW.
   2. A PostToolUse hook reads the session's context size from its transcript.
-     Past SOFT tokens it tells the agent to run a checkpoint.
+     About 36K tokens before that point it tells the agent to run a checkpoint.
+     After a compaction it waits for 20K tokens of new work first.
   3. A PreCompact hook holds automatic compaction until that checkpoint
      exists. Past CEILING tokens it lets compaction through anyway.
   4. A SessionStart hook reloads the track's STATE.md after compaction and
@@ -54,10 +57,12 @@ if sys.version_info < (3, 11):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import genie_paths  # noqa: E402
-from genie_paths import HOME, STATE_HOME, read_json, write_json  # noqa: E402
+from genie_paths import COMPACT_RATIO, HOME, STATE_HOME, read_json, write_json  # noqa: E402
 
-SOFT_RATIO = 0.72      # nudge for a checkpoint at this share of the window
-COMPACT_RATIO = 0.87   # Claude Code starts auto-compaction here (measured, undocumented)
+# Claude Code prepares a compaction about 28K tokens before it applies one
+# (measured at windows of 100K and 250K). The nudge comes a few calls before that.
+NUDGE_LEAD = 36_000
+MIN_WORK = 20_000      # no nudge until this much was added since the last compaction
 CEILING_RATIO = 0.96   # stop holding compaction past this share of the window
 RENUDGE_TOKENS = 15_000
 FRESH_SECONDS = 30 * 60
@@ -88,9 +93,17 @@ def window():
     return genie_paths.DEFAULTS["compact_window"]
 
 
-def limits():
+def nudge_at(w, floor=0):
+    """Where the checkpoint nudge starts. `floor` is the context size right
+    after the last compaction or the start. Below floor + MIN_WORK there is
+    little to save. Never later than the compaction itself."""
+    compact = w * COMPACT_RATIO
+    return int(min(compact, max(compact - NUDGE_LEAD, floor + MIN_WORK)))
+
+
+def limits(floor=0):
     w = window()
-    return w, int(w * SOFT_RATIO), int(w * CEILING_RATIO)
+    return w, nudge_at(w, floor), int(w * CEILING_RATIO)
 
 
 def is_checkpoint(cmd):
@@ -181,10 +194,11 @@ def emit_context(event, text):
 
 
 def on_post_tool(d, st, now):
-    win, soft, _ = limits()
     tokens = context_tokens(d.get("transcript_path", ""), st.get("compacted_at", 0))
     if tokens:
         st["tokens"] = tokens
+        st["floor"] = min(tokens, st.get("floor") or tokens)
+    win, soft, _ = limits(st.get("floor", 0))
     st["seen"] = now
     cmd = str((d.get("tool_input") or {}).get("command", ""))
     if is_checkpoint(cmd):
@@ -196,7 +210,7 @@ def on_post_tool(d, st, now):
         if m and m.group(1) != "none":
             st["track"] = m.group(1)
         return
-    # A hold can come below SOFT, because compaction is prepared early. Say so at once.
+    # A hold can come below the nudge point, because compaction is prepared early. Say so at once.
     if not tokens or (tokens < soft and not st.get("held")) or fresh(st, now, soft, tokens):
         return
     last = st.get("nudged_at")
@@ -319,6 +333,7 @@ def on_session_start(d, st, now, cfg):
     if d.get("source") != "compact":
         return "\n".join(digest + briefs + lab_note + gates)
     st["compacted_at"] = now
+    st.pop("floor", None)
     st["compactions"] = st.get("compactions", 0) + 1
     st["nudged_at"] = None
     st["holds"] = 0
@@ -735,7 +750,7 @@ def cmd_status(args):
         else:
             state = "quiet"
         ck = max(st.get("ckpt_time", 0), to_epoch(ckpt_ts))
-        flag = " !" if tokens >= soft else ""
+        flag = " !" if tokens >= nudge_at(w, st.get("floor", 0)) else ""
         size = k(tokens) + flag if tokens else "compacted"
         rows.append(((title or p.stem[:8])[:34], size, state, ago(last, now),
                      ago(ck, now), st.get("track", ""), compactions))
@@ -753,6 +768,13 @@ def cmd_status(args):
         table(["track", "stage", "best T2", "best T3", "ideas open", "gates", "next job"], wishes)
     print("\n'YOUR TURN' means the agent's last message was text and it has been quiet 3+ min.")
     return 0
+
+
+def cmd_window(args):
+    import genie_window
+    files = genie_window.every_transcript() if args.all else [p for d in project_dirs() for p in d.glob("*.jsonl")]
+    now = read_json(local_settings(), {}).get("autoCompactWindow")
+    return genie_window.report(args, files, now if isinstance(now, int) else None)
 
 
 def lab_parser(sub):
@@ -891,6 +913,14 @@ def main(argv=None):
     p = sub.add_parser("status")
     p.add_argument("--hours", type=float, default=12)
     p.set_defaults(fn=cmd_status)
+    p = sub.add_parser("window", help="what compaction window is worth it")
+    p.add_argument("--all", action="store_true", help="measure every project on this machine")
+    p.add_argument("--days", type=float, default=30)
+    p.add_argument("--model", help="one model id, else the ones in the transcripts")
+    p.add_argument("--floor", type=int, help="context right after a compaction, instead of the measured one")
+    p.add_argument("--growth", type=int, help="tokens added per request, instead of the measured one")
+    p.add_argument("--price", help="read,write5m,write1h,output in dollars per million tokens")
+    p.set_defaults(fn=cmd_window)
     lab_parser(sub)
     # Python 3.11 does not match an optional positional that comes after an
     # option, as in `genie gate add --kind push "text"`. Take it from the rest.

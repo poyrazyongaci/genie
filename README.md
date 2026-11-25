@@ -87,9 +87,10 @@ command, `genie`, which Claude runs from its Bash tool. `genie help` lists it al
 
 | Problem in a long session | What genie does |
 |---|---|
-| compaction comes late and loses work | a hook asks for a checkpoint at 72 percent of the window and holds compaction until it exists |
+| compaction comes late and loses work | a hook asks for a checkpoint before compaction is prepared and holds compaction until it exists |
 | after compaction the session forgets or stops | a hook gives back the newest `STATE.md` and says carry on |
 | a hold could trap a session | it lets go at 96 percent, or after 25 holds |
+| nobody knows what window is worth it | `genie window` measures your own sessions and prices each size |
 
 ### Labs
 
@@ -130,7 +131,7 @@ Genie comes out of one 48 hour, four-track contest with two people. The
 | Keep-alive hooks | 64 of 70 compactions it let through had a fresh checkpoint |
 | Watcher | replaced a five minute model poll |
 | Labs | scorer trust checks ran on real tracks. The keep or revert loop was **not** exercised there: no row was ever kept |
-| This plugin | a cleaned-up port. 48 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. No long run and no full fleet on it yet |
+| This plugin | a cleaned-up port. 59 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. No long run and no full fleet on it yet |
 
 ## What it touches
 

@@ -7,6 +7,7 @@ Start with `genie doctor`.
 | hooks do nothing | the project has no `.genie/config.json`, or the worktree lacks it | `genie init`, and commit `.genie` |
 | `genie: command not found` in your terminal | the command is on Claude's Bash path, not yours | run `! genie status` in a session, or link `bin/genie` into your PATH |
 | the window did not change | `autoCompactWindow` applies to sessions started or resumed later | restart and resume |
+| sessions compact every few calls | the window is close to the floor | run `genie window`, raise it or cut the floor |
 | hooks changed, a running session does not notice | a terminal session keeps the hooks it read at startup | restart and resume |
 | a compaction came with no checkpoint | context was past 96 percent, or it was manual | checkpoint big sessions before resuming them |
 | a session is held again and again | it makes no tool call that reaches the hook, or its checkpoint is refused | run the checkpoint by hand and read the refusal |

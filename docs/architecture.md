@@ -44,13 +44,17 @@ gates, locks and the board belong to the main one, so every session shares them.
 | Event | Does | Can block |
 |---|---|---|
 | SessionStart | prints the notes digest, lab lines and open gates. After a compaction it gives back the track's newest checkpoint | no |
-| PostToolUse | reads context size from the transcript, asks for a checkpoint past 72 percent | no |
+| PostToolUse | reads context size from the transcript, asks for a checkpoint about 36K tokens before compaction. Right after a compaction it waits for 20K tokens of new work | no |
 | PreCompact | holds automatic compaction until a fresh checkpoint exists | yes, until 96 percent or 25 holds |
 | PreToolUse | push gate, human-only gate answers, record files, solver and scorer split | yes |
 
 A checkpoint is fresh when it is under 30 minutes and under 10K tokens old. One
 bound alone is not enough. A manual `/compact` is never held. A hook that fails
 exits 0.
+
+Claude Code prepares a compaction about 28K tokens before it applies one, which
+was measured at windows of 100K and 250K. The nudge comes before that. If it
+comes late, the hold tells the agent at once.
 
 Output at session start is capped (`digest_chars`), because every token there is
 paid again after each compaction.
