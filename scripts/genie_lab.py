@@ -404,7 +404,10 @@ def match_files(patterns):
     for pat in patterns or []:
         if Path(pat).expanduser().is_absolute():  # a scorer kept outside this checkout
             ap = Path(pat).expanduser()
-            hits = list(Path(ap.anchor).glob(str(ap.relative_to(ap.anchor)))) if any(c in pat for c in "*?[") else [ap]
+            # Glob from the last folder without a wildcard. Short Windows names
+            # such as RUNNER~1 resolve as a path but never match as a pattern.
+            n = next((i for i, part in enumerate(ap.parts) if any(c in part for c in "*?[")), None)
+            hits = [ap] if n is None else list(Path(*ap.parts[:n]).glob("/".join(ap.parts[n:])))
         else:
             hits = [p for p in base.glob(pat)] if any(c in pat for c in "*?[") else [base / pat]
         for p in hits:

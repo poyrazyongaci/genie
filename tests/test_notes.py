@@ -140,6 +140,18 @@ class NotesTest(ProjectTest):
         self.assertIn("score 80", self.g("score", "--tier", "T2", "--entry", "entry.txt", "--track", "api", cwd=wt))
         self.assertIn("score 100", self.g("score", "--tier", "T2", "--entry", "entry.txt", "--track", "api"))
 
+    def test_text_may_come_before_or_after_options(self):
+        self.g("init")
+        self.g("gate", "add", "--kind", "push", "after the option")
+        self.g("gate", "add", "before the option", "--kind", "push")
+        out = self.g("gate", "list")
+        self.assertIn("after the option", out)
+        self.assertIn("before the option", out)
+        self.g("track", "add", "--owner", "ann", "api", "The API")
+        self.assertIn("The API", self.g("vault", "index"))
+        self.assertIn("unrecognized", self.g("gate", "list", "--nonsense", ok=False))
+        self.assertIn("unrecognized", self.g("status", "extra", ok=False))
+
     def test_status_runs(self):
         self.g("init")
         out = self.g("status")

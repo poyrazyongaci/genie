@@ -130,7 +130,7 @@ Genie comes out of one 48 hour, four-track contest with two people. The
 | Keep-alive hooks | 64 of 70 compactions it let through had a fresh checkpoint |
 | Watcher | replaced a five minute model poll |
 | Labs | scorer trust checks ran on real tracks. The keep or revert loop was **not** exercised there: no row was ever kept |
-| This plugin | a cleaned-up port. 47 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. No long run and no full fleet on it yet |
+| This plugin | a cleaned-up port. 48 tests. In live sessions a push and a self-approval were refused, and one small session was nudged, held, checkpointed, compacted three times and finished its task. Its window was 100K, so two of the three compactions reached the ceiling before a fresh checkpoint. No long run and no full fleet on it yet |
 
 ## What it touches
 

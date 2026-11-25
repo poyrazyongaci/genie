@@ -892,7 +892,14 @@ def main(argv=None):
     p.add_argument("--hours", type=float, default=12)
     p.set_defaults(fn=cmd_status)
     lab_parser(sub)
-    args = ap.parse_args(argv)
+    # Python 3.11 does not match an optional positional that comes after an
+    # option, as in `genie gate add --kind push "text"`. Take it from the rest.
+    args, rest = ap.parse_known_args(argv)
+    for name in ("slug", "title", "text", "entry"):
+        if rest and not rest[0].startswith("-") and getattr(args, name, "") is None:
+            setattr(args, name, rest.pop(0))
+    if rest:
+        ap.error("unrecognized arguments: " + " ".join(rest))
     if hasattr(args, "lab_fn"):
         return run_lab(args)
     return args.fn(args)
